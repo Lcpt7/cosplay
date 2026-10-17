@@ -1,12 +1,35 @@
 /**
  * SillyTavern API 封装
  *
- * 通过 Vite dev proxy /st-api 转发到远程 SillyTavern 服务器。
- * Basic Auth 凭据在 Vite 服务端代理层注入，不进入浏览器 bundle。
- * CSRF Token 运行时动态获取，不硬编码。
+ * 通过 /st-api 前缀转发到远程 SillyTavern 服务器：
+ * - 本地开发：Vite dev proxy（vite.config.ts）注入 Basic Auth
+ * - 线上部署：Cloudflare Pages Function（functions/st-api/[[path]].ts）注入 Basic Auth
+ *
+ * CSRF Token 运行时动态获取，不硬编码。凭证不进入浏览器 bundle。
  */
 
 const ST_BASE = '/st-api';
+
+/**
+ * 安全解析 JSON 响应。
+ * 如果上游返回 HTML（如 Cloudflare Pages 未部署 Function 时回退到 index.html），
+ * 抛出明确错误而非 "Unexpected token '<'"。
+ */
+async function safeJson(res: Response): Promise<unknown> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return res.json();
+  }
+  const text = await res.text().catch(() => '');
+  const preview = text.slice(0, 120).trim();
+  if (preview.startsWith('<!doctype') || preview.startsWith('<html') || preview.startsWith('<')) {
+    throw new Error(
+      'API 代理未正确配置：服务器返回了 HTML 页面而非 JSON。' +
+      '请确认 Cloudflare Pages Functions 已部署（functions/st-api/[[path]].ts）。',
+    );
+  }
+  throw new Error(`服务器返回了非 JSON 内容（Content-Type: ${contentType || '未知'}）: ${preview}`);
+}
 
 // ================================================================
 // 渠道配置 — 主备切换
@@ -48,7 +71,7 @@ export async function getCsrfToken(): Promise<string> {
   if (!res.ok) {
     throw new Error(`CSRF token 获取失败: ${res.status} ${res.statusText}`);
   }
-  const data = await res.json();
+  const data = await safeJson(res);
   csrfToken = (data as { token: string }).token;
   return csrfToken;
 }
@@ -93,7 +116,7 @@ export async function fetchCharactersFromST(): Promise<STCharacter[]> {
   if (!res.ok) {
     throw new Error(`角色列表获取失败: ${res.status} ${res.statusText}`);
   }
-  const data = await res.json();
+  const data = await safeJson(res);
   // 兼容多种可能返回格式：数组 / { characters: [] } / { object: [] }
   if (Array.isArray(data)) return data as STCharacter[];
   if (Array.isArray((data as { characters?: unknown[] }).characters)) {
@@ -123,7 +146,7 @@ export async function fetchCharacterDetails(avatar: string): Promise<STCharacter
   if (!res.ok) {
     throw new Error(`角色详情获取失败: ${res.status} ${res.statusText}`);
   }
-  return (await res.json()) as STCharacterDetails;
+  return (await safeJson(res)) as STCharacterDetails;
 }
 
 // ================================================================
@@ -247,6 +270,15 @@ async function tryChannel(
     const err = new Error(`[${channel.name}] HTTP ${res.status} ${res.statusText} ${errText.slice(0, 200)}`);
     (err as Error & { status?: number }).status = res.status;
     throw err;
+  }
+
+  // 检测 HTML 响应（代理未配置时 Cloudflare Pages 回退到 index.html）
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error(
+      `[${channel.name}] API 代理未正确配置：服务器返回了 HTML 而非 SSE 流。` +
+      '请确认 Cloudflare Pages Functions 已部署。',
+    );
   }
 
   if (!res.body) {
