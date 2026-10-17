@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量（含敏感凭据，禁止提交）
+.env.local
+.env.*.local
+
+# 编辑器
+.vscode/
+.idea/
+
+# 系统
+.DS_Store
+Thumbs.db
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 缓存
+.vite/
+.eslintcache
+coverage/
+
+# CodeArts agent 数据
+.codeartsdoer/
