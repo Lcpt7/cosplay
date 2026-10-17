@@ -69,7 +69,18 @@ export async function getCsrfToken(): Promise<string> {
     credentials: 'include',
   });
   if (!res.ok) {
-    throw new Error(`CSRF token 获取失败: ${res.status} ${res.statusText}`);
+    // 读取响应 body 和诊断头，帮助排查 403/401 等问题
+    const bodyText = await res.text().catch(() => '');
+    const preview = bodyText.slice(0, 200).trim();
+    const debugStatus = res.headers.get('X-Debug-Upstream-Status') || '';
+    const debugCT = res.headers.get('X-Debug-Upstream-Content-Type') || '';
+    const debugAuth = res.headers.get('X-Debug-Has-Auth') || '';
+    const debugParts: string[] = [`CSRF token 获取失败: ${res.status} ${res.statusText}`];
+    if (debugStatus) debugParts.push(`上游状态: ${debugStatus}`);
+    if (debugCT) debugParts.push(`上游Content-Type: ${debugCT}`);
+    if (debugAuth) debugParts.push(`Auth注入: ${debugAuth}`);
+    if (preview) debugParts.push(`响应内容: ${preview}`);
+    throw new Error(debugParts.join(' | '));
   }
   const data = await safeJson(res);
   csrfToken = (data as { token: string }).token;

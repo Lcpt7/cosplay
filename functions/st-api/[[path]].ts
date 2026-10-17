@@ -33,8 +33,7 @@ const DROP_REQUEST_HEADERS = [
   'cf-visitor',
   'cf-worker',
   'cf-ewait-time',
-  'x-forwarded-for',
-  'x-forwarded-proto',
+
   'x-forwarded-host',
   'x-real-ip',
 ];
@@ -57,6 +56,14 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const reqHeaders = new Headers(request.headers);
   for (const h of DROP_REQUEST_HEADERS) {
     reqHeaders.delete(h);
+  }
+
+  // 设置 X-Forwarded-For 为客户端真实 IP（从 Cloudflare 注入的 CF-Connecting-IP 获取）
+  // 如果 ST 的 whitelistMode 使用 forwardedForWhitelist，会检查此头来决定是否放行
+  const clientIp = request.headers.get('cf-connecting-ip');
+  if (clientIp) {
+    reqHeaders.set('X-Forwarded-For', clientIp);
+    reqHeaders.set('X-Real-IP', clientIp);
   }
 
   // 注入 Basic Auth（从 Cloudflare 环境变量读取，不硬编码）
@@ -95,6 +102,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       const rewritten = cookie.replace(/;\s*domain=[^;]*/gi, '');
       resHeaders.append('Set-Cookie', rewritten);
     }
+  }
+
+  // 错误响应时添加诊断头，帮助排查 403/401 等问题的真实来源
+  if (!upstreamRes.ok) {
+    resHeaders.set('X-Debug-Upstream-Status', String(upstreamRes.status));
+    resHeaders.set('X-Debug-Upstream-Content-Type', resHeaders.get('content-type') || 'none');
+    resHeaders.set('X-Debug-Has-Auth', user && pass && user !== 'your_username' ? 'yes' : 'no');
   }
 
   // 保留上游状态码、头和流式 body（SSE 透传）
