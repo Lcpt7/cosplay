@@ -28,3 +28,8 @@ coverage/
 
 # CodeArts agent 数据
 .codeartsdoer/
+
+# 环境变量（含敏感凭据，禁止提交）
+.env
+.env.*
+!.env.example
